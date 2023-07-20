@@ -158,8 +158,9 @@ class STELLAR:
             preds = np.append(preds, pred.cpu().numpy())
             confs = np.append(confs, conf.cpu().numpy())
         preds = preds.astype(int)
+        confs = confs.astype(float)
         mean_uncert = 1 - np.mean(confs)
-        return mean_uncert, preds
+        return mean_uncert, confs, prob, preds
 
     def train(self):
         unlabel_x = self.dataset.unlabeled_data.x
@@ -180,6 +181,6 @@ class STELLAR:
         optimizer = optim.Adam(self.model.parameters(), lr=self.args.lr, weight_decay=self.args.wd)
 
         for epoch in range(self.args.epochs):
-            mean_uncert, _ = self.pred()
+            mean_uncert, _, _, _ = self.pred()
             self.train_epoch(self.args, self.model, self.args.device, self.dataset, optimizer, mean_uncert, epoch)
            
