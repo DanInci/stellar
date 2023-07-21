@@ -22,7 +22,6 @@ def get_hubmap_edge_index(pos, regions, distance_thres):
 
 
 def get_own_edge_index(pos, distance_threshold):
-    # construct edge indexes in one region
     edge_list = []
     dists = pairwise_distances(pos)
     dists_mask = dists < distance_threshold
@@ -66,8 +65,8 @@ def load_hubmap_data(labeled_file, unlabeled_file, distance_thres, sample_rate):
     return train_X, train_y, test_X, labeled_edges, unlabeled_edges, inverse_dict
 
 
-def load_own_data(train_df, test_df, distance_threshold, sample_rate):
-    train_df = train_df.sample(n=round(sample_rate*len(train_df)), random_state=1)
+def prepare_graph(train_df, test_df, distance_threshold, sample_rate):
+    train_df = train_df.sample(n=round(sample_rate * len(train_df)), random_state=1)
     train_X = train_df.iloc[:, 9:].values
     test_X = test_df.iloc[:, 9:].values
     train_y = train_df['cell_type'].values
@@ -75,6 +74,7 @@ def load_own_data(train_df, test_df, distance_threshold, sample_rate):
     unlabeled_pos = test_df[['x', 'y']].values
     labeled_edges = get_own_edge_index(labeled_pos, distance_threshold)
     unlabeled_edges = get_own_edge_index(unlabeled_pos, distance_threshold)
+
     return train_X, train_y, test_X, labeled_edges, unlabeled_edges
 
 def load_tonsilbe_data(filename, distance_thres, sample_rate):

@@ -7,7 +7,7 @@ from utils import entropy, MarginLoss
 import numpy as np
 from itertools import cycle
 import copy
-from torch_geometric.data import ClusterData, ClusterLoader
+from torch_geometric.loader import ClusterData, ClusterLoader
 import scanpy as sc
 from anndata import AnnData
 
@@ -171,10 +171,13 @@ class STELLAR:
         clusters = clusters.astype(int)
 
         seed_model = models.FCNet(x_dim = self.args.input_dim, num_cls=torch.max(self.dataset.labeled_data.y)+1)
+        print(f'Training on {self.args.device}')
         seed_model = seed_model.to(self.args.device)
         seed_optimizer = optim.Adam(seed_model.parameters(), lr=1e-3, weight_decay=5e-2)
+
         for epoch in range(20):
             self.train_supervised(self.args, seed_model, self.args.device, self.dataset, seed_optimizer, epoch)
+
         novel_label_seeds = self.est_seeds(self.args, seed_model, self.args.device, self.dataset, clusters, self.args.num_seed_class)
         self.dataset.unlabeled_data.novel_label_seeds = torch.tensor(novel_label_seeds)
         # Set the optimizer

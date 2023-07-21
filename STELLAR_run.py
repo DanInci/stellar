@@ -1,45 +1,129 @@
 import argparse
-from utils import prepare_save_dir
 from STELLAR import STELLAR
 import numpy as np
+import pandas as pd
+import scanpy as sc
 import os
+import json
 import torch
-from datasets import GraphDataset, load_tonsilbe_data, load_hubmap_data
+import pickle
+import anndata
+from datasets import GraphDataset, prepare_graph
+
+def _plot_umap(adata):
+    sc.pp.neighbors(adata)
+    sc.tl.umap(adata)
+    fig = sc.pl.umap(adata, color=['pred'], size=5, return_fig=True)
+
+    return fig
+
+
+def _create_results(val_df, pred_prob, pred_prob_list, pred_labels):
+    results_df = val_df[['sample_id', 'object_id', 'cell_type']].copy()
+    results_df['pred'] = pred_labels.tolist()
+    results_df['pred_prob'] = pred_prob.tolist()
+    results_df['prob_list'] = pred_prob_list.tolist()
+    results_df.rename(columns={
+        'sample_id': 'image_id',
+        'object_id': 'cell_id',
+        'cell_type': 'label'
+    }, inplace=True)
+
+    return results_df
+
+
+def _create_labels_dict(train_df, val_df):
+    train_labels = list(set(train_df['cell_type']))
+    val_labels = list(set(val_df['cell_type']))
+    labels = list(set(train_labels + val_labels))
+
+    cell_types = np.sort(labels).tolist()
+    cell_type_dict = {}
+    inverse_dict = {}
+    for i, cell_type in enumerate(cell_types):
+        cell_type_dict[cell_type] = i
+        inverse_dict[i] = cell_type
+
+    return cell_type_dict, inverse_dict
+
+
+def _prepare_dataset(train_df, val_df, args):
+    processed_graph_file = os.path.join(args.base_path, "dataset_preprocessed.pkl")
+    if args.use_processed_graph and os.path.exists(processed_graph_file):
+        print(f'Using preprocessed graph file: {processed_graph_file}')
+        packed_graph = pickle.load(open(processed_graph_file, "rb"))
+    else:
+        print(f'Processing spatial graph from cell coordinates...')
+        packed_graph = prepare_graph(train_df, val_df, args.distance_threshold, args.sample_rate)
+
+        # save to .pkl
+        with open(processed_graph_file, 'wb') as file:
+            pickle.dump(packed_graph, file)
+
+    labeled_X, labeled_y, unlabeled_X, labeled_edges, unlabeled_edges = packed_graph
+    dataset = GraphDataset(labeled_X, labeled_y, unlabeled_X, labeled_edges, unlabeled_edges)
+
+    return dataset
+
 
 def main():
     parser = argparse.ArgumentParser(description='STELLAR')
-    parser.add_argument('--dataset', default='Hubmap', help='dataset setting')
-    parser.add_argument('--seed', type=int, default=1, metavar='S', help='random seed (default: 1)')
-    parser.add_argument('--name', type=str, default='STELLAR')
-    parser.add_argument('--epochs', type=int, default=20)
-    parser.add_argument('--lr', type=float, default=1e-3)
-    parser.add_argument('--wd', type=float, default=5e-2)
-    parser.add_argument('--num-heads', type=int, default=22)
-    parser.add_argument('--num-seed-class', type=int, default=0)
-    parser.add_argument('--sample-rate', type=float, default=0.5)
-    parser.add_argument('-b', '--batch-size', default=1, type=int,
-                    metavar='N',
-                    help='mini-batch size')
-    parser.add_argument('--distance_thres', default=50, type=int)
-    parser.add_argument('--savedir', type=str, default='./')
+    parser.add_argument('--base_path', type=str, required=True,
+                        help='configuration_path')
     args = parser.parse_args()
+
+    config_path = os.path.join(args.base_path, "config.json")
+    with open(config_path) as f:
+        config = json.load(f)
+
+    args.train_dataset = config['train_dataset']
+    args.val_dataset = config['val_dataset']
+    args.epochs = config['epochs']
+    args.lr = config['lr']
+    args.wd = config['wd']
+    args.sample_rate = config['sample_rate']
+    args.batch_size = config['batch_size']
+    args.distance_threshold = config['distance_threshold']
+    args.num_heads = config['num_heads']
+    args.seed = config['seed']
+    args.num_heads = config['num_heads']
+    args.num_seed_class = config['num_seed_class']
     args.cuda = torch.cuda.is_available()
     args.device = torch.device("cuda" if args.cuda else "cpu")
+    args.use_processed_graph = config['use_processed_graph']
 
-    # Seed the run and create saving directory
-    args.name = '_'.join([args.dataset, args.name])
-    args = prepare_save_dir(args, __file__)
+    train_df = pd.read_csv(args.train_dataset)
+    train_df = train_df[train_df['cell_type'] != 'unlabeled'].reset_index(drop=True)
+
+    val_df = pd.read_csv(args.val_dataset)
+    val_df = val_df[val_df['cell_type'] != 'unlabeled'].reset_index(drop=True)
+
+    cell_type_dict, inverse_dict = _create_labels_dict(train_df, val_df)
+
+    train_df['cell_type'] = train_df['cell_type'].map(cell_type_dict)
+    dataset = _prepare_dataset(train_df, val_df, args)
     
-    if args.dataset == 'Hubmap':
-        labeled_X, labeled_y, unlabeled_X, labeled_edges, unlabeled_edges, inverse_dict = load_hubmap_data('./data/B004_training_dryad.csv', './data/B0056_unnanotated_dryad.csv', args.distance_thres, args.sample_rate)
-        dataset = GraphDataset(labeled_X, labeled_y, unlabeled_X, labeled_edges, unlabeled_edges)
-    elif args.dataset == 'TonsilBE':
-        labeled_X, labeled_y, unlabeled_X, labeled_edges, unlabeled_edges, inverse_dict = load_tonsilbe_data('./data/BE_Tonsil_l3_dryad.csv', args.distance_thres, args.sample_rate)
-        dataset = GraphDataset(labeled_X, labeled_y, unlabeled_X, labeled_edges, unlabeled_edges)
     stellar = STELLAR(args, dataset)
     stellar.train()
-    _, results = stellar.pred()
-    np.save(os.path.join(args.savedir, args.dataset + '_results.npy'), results)
+
+    _, pred_prob, pred_prob_list, pred_labels = stellar.pred()
+
+    # reverse map labels to their original keys
+    pred_labels = pred_labels.astype('object')
+    for i in range(len(pred_labels)):
+        if pred_labels[i] in inverse_dict.keys():
+            pred_labels[i] = inverse_dict[pred_labels[i]]
+
+    # create results file
+    results_df = _create_results(val_df, pred_prob, pred_prob_list, pred_labels)
+    results_df.to_csv(os.path.join(args.base_path, 'stellar_results.csv'), index=False)
+
+    # plot UMAP of predictions
+    adata = anndata.AnnData(dataset.unlabeled_data.x.numpy())
+    adata.obs['pred'] = pd.Categorical(pred_labels)
+    figure = _plot_umap(adata)
+    figure.savefig(os.path.join(args.base_path, 'UMAP_predictions.pdf'), format="pdf", bbox_inches="tight")
+
 
 if __name__ == '__main__':
     main()
