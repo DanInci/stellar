@@ -8,6 +8,7 @@ import json
 import torch
 import pickle
 import anndata
+import networkx as nx
 from datasets import GraphDataset, prepare_graph
 
 def _plot_umap(adata):
@@ -47,7 +48,7 @@ def _create_labels_dict(train_df, val_df):
     return cell_type_dict, inverse_dict
 
 
-def _prepare_dataset(train_df, val_df, args):
+def _prepare_dataset(train_df, val_df, args, compute_graph_statistics=True):
     processed_graph_file = os.path.join(args.base_path, "dataset_preprocessed.pkl")
     if args.use_processed_graph and os.path.exists(processed_graph_file):
         print(f'Using preprocessed graph file: {processed_graph_file}')
@@ -63,7 +64,24 @@ def _prepare_dataset(train_df, val_df, args):
     labeled_X, labeled_y, unlabeled_X, labeled_edges, unlabeled_edges = packed_graph
     dataset = GraphDataset(labeled_X, labeled_y, unlabeled_X, labeled_edges, unlabeled_edges)
 
+    if compute_graph_statistics:
+        avg_node_degree_labeled = _compute_avg_node_degree(labeled_edges)
+        avg_node_degree_unlabeled = _compute_avg_node_degree(unlabeled_edges)
+        print('Avg Node Degree Labeled = {:.3f} Avg Node Degree Unlabeled = {:.3f}'
+              .format(avg_node_degree_labeled, avg_node_degree_unlabeled))
+
     return dataset
+
+
+def _compute_avg_node_degree(edge_list):
+    graph = nx.Graph(edge_list)
+    node_degrees = dict(graph.degree())
+
+    # Compute the average node degree
+    total_nodes = len(node_degrees)
+    average_node_degree = sum(node_degrees.values()) / total_nodes
+
+    return average_node_degree
 
 
 def main():
