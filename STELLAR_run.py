@@ -33,10 +33,8 @@ def _create_results(val_df, pred_prob, pred_prob_list, pred_labels):
     return results_df
 
 
-def _create_labels_dict(train_df, val_df):
-    train_labels = list(set(train_df['cell_type']))
-    val_labels = list(set(val_df['cell_type']))
-    labels = list(set(train_labels + val_labels))
+def _create_labels_dict(dataset_df):
+    labels = list(set(dataset_df['cell_type']))
 
     cell_types = np.sort(labels).tolist()
     cell_type_dict = {}
@@ -48,8 +46,13 @@ def _create_labels_dict(train_df, val_df):
     return cell_type_dict, inverse_dict
 
 
-def _prepare_dataset(train_df, val_df, args, compute_graph_statistics=True):
-    processed_graph_file = os.path.join(args.base_path, "dataset_preprocessed.pkl")
+def _prepare_dataset(train_df, val_df, args, split=None):
+    if split is not None:
+        processed_graph_file_name = f"dataset_preprocessed_{split}.pkl"
+    else:
+        processed_graph_file_name = "dataset_preprocessed.pkl"
+
+    processed_graph_file = os.path.join(args.base_path, processed_graph_file_name)
     if args.use_processed_graph and os.path.exists(processed_graph_file):
         print(f'Using preprocessed graph file: {processed_graph_file}')
         packed_graph = pickle.load(open(processed_graph_file, "rb"))
@@ -64,7 +67,7 @@ def _prepare_dataset(train_df, val_df, args, compute_graph_statistics=True):
     labeled_X, labeled_y, unlabeled_X, labeled_edges, unlabeled_edges = packed_graph
     dataset = GraphDataset(labeled_X, labeled_y, unlabeled_X, labeled_edges, unlabeled_edges)
 
-    if compute_graph_statistics:
+    if args.compute_graph_statistics:
         avg_node_degree_labeled = _compute_avg_node_degree(labeled_edges)
         avg_node_degree_unlabeled = _compute_avg_node_degree(unlabeled_edges)
         print('Avg Node Degree Labeled = {:.3f} Avg Node Degree Unlabeled = {:.3f}'
@@ -94,8 +97,7 @@ def main():
     with open(config_path) as f:
         config = json.load(f)
 
-    args.train_dataset = config['train_dataset']
-    args.val_dataset = config['val_dataset']
+    args.dataset = config['dataset']
     args.epochs = config['epochs']
     args.lr = config['lr']
     args.wd = config['wd']
@@ -109,36 +111,49 @@ def main():
     args.cuda = torch.cuda.is_available()
     args.device = torch.device("cuda" if args.cuda else "cpu")
     args.use_processed_graph = config['use_processed_graph']
+    args.compute_graph_statistics = config['compute_graph_statistics']
 
-    train_df = pd.read_csv(args.train_dataset)
-    train_df = train_df[train_df['cell_type'] != 'unlabeled'].reset_index(drop=True)
+    dataset_df = pd.read_csv(args.dataset)
+    dataset_df = dataset_df[dataset_df['cell_type'] != 'unlabeled'].reset_index(drop=True)
+    cell_type_dict, inverse_dict = _create_labels_dict(dataset_df)
 
-    val_df = pd.read_csv(args.val_dataset)
-    val_df = val_df[val_df['cell_type'] != 'unlabeled'].reset_index(drop=True)
+    agg_results_df = pd.DataFrame()
+    agg_unlabeled_data_x = None
+    for i, val_split in enumerate(dataset_df['split'].unique()):
+        print(f"Running STELLAR on fold {i} ...")
+        val_df = dataset_df[dataset_df['split'] == val_split]
+        val_df = val_df.drop('split', axis=1)
+        train_df = dataset_df[dataset_df['split'] != val_split]
+        train_df = train_df.drop('split', axis=1)
 
-    cell_type_dict, inverse_dict = _create_labels_dict(train_df, val_df)
+        train_df['cell_type'] = train_df['cell_type'].map(cell_type_dict)
+        dataset = _prepare_dataset(train_df, val_df, args, split=i)
 
-    train_df['cell_type'] = train_df['cell_type'].map(cell_type_dict)
-    dataset = _prepare_dataset(train_df, val_df, args)
-    
-    stellar = STELLAR(args, dataset)
-    stellar.train()
+        stellar = STELLAR(args, dataset)
+        stellar.train()
 
-    _, pred_prob, pred_prob_list, pred_labels = stellar.pred()
+        _, pred_prob, pred_prob_list, pred_labels = stellar.pred()
 
-    # reverse map labels to their original keys
-    pred_labels = pred_labels.astype('object')
-    for i in range(len(pred_labels)):
-        if pred_labels[i] in inverse_dict.keys():
-            pred_labels[i] = inverse_dict[pred_labels[i]]
+        # reverse map labels to their original keys
+        pred_labels = pred_labels.astype('object')
+        for i in range(len(pred_labels)):
+            if pred_labels[i] in inverse_dict.keys():
+                pred_labels[i] = inverse_dict[pred_labels[i]]
+
+        results_df = _create_results(val_df, pred_prob, pred_prob_list, pred_labels)
+        agg_results_df = pd.concat([agg_results_df, results_df])
+
+        if agg_unlabeled_data_x is None:
+            agg_unlabeled_data_x = dataset.unlabeled_data.x.numpy()
+        else:
+            agg_unlabeled_data_x = np.concatenate([agg_unlabeled_data_x, dataset.unlabeled_data.x.numpy()], axis=0)
 
     # create results file
-    results_df = _create_results(val_df, pred_prob, pred_prob_list, pred_labels)
-    results_df.to_csv(os.path.join(args.base_path, 'stellar_results.csv'), index=False)
+    agg_results_df.to_csv(os.path.join(args.base_path, 'stellar_results.csv'), index=False)
 
     # plot UMAP of predictions
-    adata = anndata.AnnData(dataset.unlabeled_data.x.numpy())
-    adata.obs['pred'] = pd.Categorical(pred_labels)
+    adata = anndata.AnnData(agg_unlabeled_data_x)
+    adata.obs['pred'] = pd.Categorical(agg_results_df['pred'])
     figure = _plot_umap(adata)
     figure.savefig(os.path.join(args.base_path, 'UMAP_predictions.pdf'), format="pdf", bbox_inches="tight")
 
