@@ -21,12 +21,30 @@ def get_hubmap_edge_index(pos, regions, distance_thres):
     return edge_list
 
 
-def get_own_edge_index(pos, distance_threshold):
+def get_own_edge_index(df, distance_threshold):
     edge_list = []
-    dists = pairwise_distances(pos)
-    dists_mask = dists < distance_threshold
-    np.fill_diagonal(dists_mask, 0)
-    edge_list = np.transpose(np.nonzero(dists_mask)).tolist()
+
+    # we have to independently construct the graph for each sample
+    # map local cell id to a global cell id
+
+    start_cell_index = 0
+    samples = df['sample_id'].unique()
+    for sample_id in samples:
+        sample_df = df[df['sample_id'] == sample_id]
+        pos = sample_df[['x', 'y']].values
+        dists = pairwise_distances(pos)
+        dists_mask = dists < distance_threshold
+        np.fill_diagonal(dists_mask, 0)
+        sample_edge_list = np.transpose(np.nonzero(dists_mask)).tolist()
+
+        # map sample cell ids in order to be globally unique
+        for (i, j) in sample_edge_list:
+            new_i = start_cell_index + i
+            new_j = start_cell_index + j
+            edge_list.append([new_i, new_j])
+
+        start_cell_index += sample_df.shape[0]  # don't forget to increment the offset required for global mapping
+
     return edge_list
 
 def get_tonsilbe_edge_index(pos, distance_thres):
@@ -70,10 +88,9 @@ def prepare_graph(train_df, test_df, distance_threshold, sample_rate):
     train_X = train_df.iloc[:, 9:].values
     test_X = test_df.iloc[:, 9:].values
     train_y = train_df['cell_type'].values
-    labeled_pos = train_df[['x', 'y']].values
-    unlabeled_pos = test_df[['x', 'y']].values
-    labeled_edges = get_own_edge_index(labeled_pos, distance_threshold)
-    unlabeled_edges = get_own_edge_index(unlabeled_pos, distance_threshold)
+
+    labeled_edges = get_own_edge_index(train_df, distance_threshold)
+    unlabeled_edges = get_own_edge_index(test_df, distance_threshold)
 
     return train_X, train_y, test_X, labeled_edges, unlabeled_edges
 
