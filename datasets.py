@@ -28,9 +28,9 @@ def get_own_edge_index(df, distance_threshold):
     # map local cell id to a global cell id
 
     start_cell_index = 0
-    samples = df['sample_id'].unique()
-    for sample_id in samples:
-        sample_df = df[df['sample_id'] == sample_id]
+    samples = df['image_name'].unique()
+    for image_name in samples:
+        sample_df = df[df['image_name'] == image_name]
         pos = sample_df[['x', 'y']].values
         dists = pairwise_distances(pos)
         dists_mask = dists < distance_threshold

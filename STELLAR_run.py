@@ -20,12 +20,12 @@ def _plot_umap(adata):
 
 
 def _create_results(val_df, pred_prob, pred_prob_list, pred_labels):
-    results_df = val_df[['sample_id', 'object_id', 'cell_type']].copy()
+    results_df = val_df[['image_name', 'object_id', 'cell_type']].copy()
     results_df['pred'] = pred_labels.tolist()
     results_df['pred_prob'] = pred_prob.tolist()
     results_df['prob_list'] = pred_prob_list.tolist()
     results_df.rename(columns={
-        'sample_id': 'image_id',
+        'image_name': 'image_id',
         'object_id': 'cell_id',
         'cell_type': 'label'
     }, inplace=True)
@@ -113,8 +113,10 @@ def main():
     args.use_processed_graph = config['use_processed_graph']
     args.compute_graph_statistics = config['compute_graph_statistics']
 
-    dataset_df = pd.read_csv(args.dataset)
-    dataset_df = dataset_df[dataset_df['cell_type'] != 'unlabeled'].reset_index(drop=True)
+    dataset_df = pd.read_csv(args.dataset, dtype={
+        'patient_id': str,
+        'image_name': str,
+    })
     cell_type_dict, inverse_dict = _create_labels_dict(dataset_df)
 
     agg_results_df = pd.DataFrame()
