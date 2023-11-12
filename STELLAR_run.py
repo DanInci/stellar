@@ -119,36 +119,37 @@ def main():
     })
     cell_type_dict, inverse_dict = _create_labels_dict(dataset_df)
 
-    agg_results_df = pd.DataFrame()
-    agg_unlabeled_data_x = None
-    for i, val_split in enumerate(dataset_df['split'].unique()):
-        print(f"Running STELLAR on fold {i} ...")
-        val_df = dataset_df[dataset_df['split'] == val_split]
-        val_df = val_df.drop('split', axis=1)
-        train_df = dataset_df[dataset_df['split'] != val_split]
-        train_df = train_df.drop('split', axis=1)
+    # agg_results_df = pd.DataFrame()
+    # agg_unlabeled_data_x = None
+    # for i, val_split in enumerate(dataset_df['split'].unique()):
+    # print(f"Running STELLAR on fold {i} ...")
+    val_df = dataset_df[dataset_df['split'] == 1]
+    val_df = val_df.drop('split', axis=1)
+    train_df = dataset_df[dataset_df['split'] == 0]
+    train_df = train_df.drop('split', axis=1)
 
-        train_df['cell_type'] = train_df['cell_type'].map(cell_type_dict)
-        dataset = _prepare_dataset(train_df, val_df, args, split=i)
+    train_df['cell_type'] = train_df['cell_type'].map(cell_type_dict)
+    #dataset = _prepare_dataset(train_df, val_df, args, split=i)
+    dataset = _prepare_dataset(train_df, val_df, args, split=None)
 
-        stellar = STELLAR(args, dataset)
-        stellar.train()
+    stellar = STELLAR(args, dataset)
+    stellar.train()
 
-        _, pred_prob, pred_prob_list, pred_labels = stellar.pred()
+    _, pred_prob, pred_prob_list, pred_labels = stellar.pred()
 
-        # reverse map labels to their original keys
-        pred_labels = pred_labels.astype('object')
-        for i in range(len(pred_labels)):
-            if pred_labels[i] in inverse_dict.keys():
-                pred_labels[i] = inverse_dict[pred_labels[i]]
+    # reverse map labels to their original keys
+    pred_labels = pred_labels.astype('object')
+    for i in range(len(pred_labels)):
+        if pred_labels[i] in inverse_dict.keys():
+            pred_labels[i] = inverse_dict[pred_labels[i]]
 
-        results_df = _create_results(val_df, pred_prob, pred_prob_list, pred_labels)
-        agg_results_df = pd.concat([agg_results_df, results_df])
+    agg_results_df = _create_results(val_df, pred_prob, pred_prob_list, pred_labels)
+    # agg_results_df = pd.concat([agg_results_df, results_df])
 
-        if agg_unlabeled_data_x is None:
-            agg_unlabeled_data_x = dataset.unlabeled_data.x.numpy()
-        else:
-            agg_unlabeled_data_x = np.concatenate([agg_unlabeled_data_x, dataset.unlabeled_data.x.numpy()], axis=0)
+    #if agg_unlabeled_data_x is None:
+    agg_unlabeled_data_x = dataset.unlabeled_data.x.numpy()
+    #else:
+    #    agg_unlabeled_data_x = np.concatenate([agg_unlabeled_data_x, dataset.unlabeled_data.x.numpy()], axis=0)
 
     # create results file
     agg_results_df.to_csv(os.path.join(args.base_path, 'stellar_results.csv'), index=False)
