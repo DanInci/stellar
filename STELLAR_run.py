@@ -125,7 +125,7 @@ def main():
 
     val_df = dataset_df[dataset_df['dataset_type'] == 'test']
     val_df = val_df.drop('dataset_type', axis=1)
-    val_df['cell_type'] = val_df['cell_type'].map(cell_type_dict)
+    # val_df['cell_type'] = val_df['cell_type'].map(cell_type_dict)
 
     agg_results_df = pd.DataFrame()
     agg_unlabeled_data_x = None
