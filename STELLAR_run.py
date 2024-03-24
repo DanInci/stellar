@@ -119,37 +119,52 @@ def main():
     })
     cell_type_dict, inverse_dict = _create_labels_dict(dataset_df)
 
-    # agg_results_df = pd.DataFrame()
-    # agg_unlabeled_data_x = None
-    # for i, val_split in enumerate(dataset_df['split'].unique()):
-    # print(f"Running STELLAR on fold {i} ...")
-    val_df = dataset_df[dataset_df['split'] == 1]
-    val_df = val_df.drop('split', axis=1)
-    train_df = dataset_df[dataset_df['split'] == 0]
-    train_df = train_df.drop('split', axis=1)
-
+    train_df = dataset_df[dataset_df['dataset_type'] == 'training']
+    train_df = train_df.drop('dataset_type', axis=1)
     train_df['cell_type'] = train_df['cell_type'].map(cell_type_dict)
-    #dataset = _prepare_dataset(train_df, val_df, args, split=i)
-    dataset = _prepare_dataset(train_df, val_df, args, split=None)
 
-    stellar = STELLAR(args, dataset)
-    stellar.train()
+    val_df = dataset_df[dataset_df['dataset_type'] == 'test']
+    val_df = val_df.drop('dataset_type', axis=1)
+    val_df['cell_type'] = val_df['cell_type'].map(cell_type_dict)
 
-    _, pred_prob, pred_prob_list, pred_labels = stellar.pred()
+    agg_results_df = pd.DataFrame()
+    agg_unlabeled_data_x = None
+    for split in train_df['split'].unique():
+        train_split_df = train_df[train_df['split'] == split]
+        train_split_df = train_split_df.drop('split', axis=1)
+        val_split_df = val_df[val_df['split'] == split]
+        val_split_df = val_split_df.drop('split', axis=1)
 
-    # reverse map labels to their original keys
-    pred_labels = pred_labels.astype('object')
-    for i in range(len(pred_labels)):
-        if pred_labels[i] in inverse_dict.keys():
-            pred_labels[i] = inverse_dict[pred_labels[i]]
+        print(f"Running STELLAR on fold {split} ...")
 
-    agg_results_df = _create_results(val_df, pred_prob, pred_prob_list, pred_labels)
-    # agg_results_df = pd.concat([agg_results_df, results_df])
+        dataset = _prepare_dataset(train_split_df, val_split_df, args, split=split)
 
-    #if agg_unlabeled_data_x is None:
-    agg_unlabeled_data_x = dataset.unlabeled_data.x.numpy()
-    #else:
-    #    agg_unlabeled_data_x = np.concatenate([agg_unlabeled_data_x, dataset.unlabeled_data.x.numpy()], axis=0)
+        stellar = STELLAR(args, dataset)
+        stellar.train()
+
+        _, pred_prob, pred_prob_list, pred_labels = stellar.pred()
+
+        # reverse map labels to their original keys
+        pred_labels = pred_labels.astype('object')
+        for i in range(len(pred_labels)):
+            if pred_labels[i] in inverse_dict.keys():
+                pred_labels[i] = inverse_dict[pred_labels[i]]
+
+        results_df = _create_results(val_split_df, pred_prob, pred_prob_list, pred_labels)
+        results_df.to_csv(os.path.join(args.base_path, f'stellar_results_{split}.csv'), index=False)
+        agg_results_df = pd.concat([agg_results_df, results_df])
+
+        # plot UMAP of predictions for split
+        unlabeled_data_x = dataset.unlabeled_data.x.numpy()
+        adata = anndata.AnnData(unlabeled_data_x)
+        adata.obs['pred'] = pd.Categorical(results_df['pred'])
+        figure = _plot_umap(adata)
+        figure.savefig(os.path.join(args.base_path, f'UMAP_predictions_{split}.pdf'), format="pdf", bbox_inches="tight")
+
+        if agg_unlabeled_data_x is None:
+            agg_unlabeled_data_x = unlabeled_data_x
+        else:
+            agg_unlabeled_data_x = np.concatenate([agg_unlabeled_data_x, unlabeled_data_x], axis=0)
 
     # create results file
     agg_results_df.to_csv(os.path.join(args.base_path, 'stellar_results.csv'), index=False)
